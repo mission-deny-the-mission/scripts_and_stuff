@@ -1,0 +1,7 @@
+[
+  {
+    "timestamp": "2025-11-12T01:10:16.087875",
+    "category": "troubleshooting",
+    "content": "SGLang Puppet Script Issues and Solutions:\n\n1. **Initial Issue**: Puppet command not found in sudo PATH\n   - Puppet was installed at /opt/puppetlabs/bin/puppet but not in sudo's PATH\n   - Solution: Use full path: sudo /opt/puppetlabs/bin/puppet\n\n2. **Primary Syntax Error**: Invalid heredoc syntax\n   - Original heredoc used incorrect markers: `@(EOT)` with content starting with `| EOT` and `|| EOT`\n   - After fixing markers to just `EOT`, tried various heredoc formats that weren't supported by Puppet 7.34.0\n   - Final Solution: Replaced heredoc syntax with multi-line strings using `\\n` escape sequences\n\n3. **Heredoc Syntax Attempted**:\n   - `@(EOT)` with `EOT` terminator - Failed\n   - `@(EOT-)` with `EOT-` terminator - Failed  \n   - `@(EOT|)` with `|EOT` terminator - Failed\n   - `@(EOT)` with `|EOT` terminator - Failed\n   - `@(END)` with `END` terminator - Failed\n   - `@(END|)` with `|END` terminator - Failed\n   - `@EOT` with `EOT` terminator - Failed (unsupported syntax)\n\n4. **Final Working Solution**: \n   - Replaced all heredoc blocks with regular quoted strings containing escaped newlines\n   - This approach is more portable and works consistently across Puppet versions\n   - Script now validates and runs successfully in noop mode"
+  }
+]

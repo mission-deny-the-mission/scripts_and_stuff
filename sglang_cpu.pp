@@ -37,6 +37,18 @@ class sglang_cpu {
     require => Exec['download_miniconda'],
     path    => ['/usr/bin', '/bin'],
   }
+
+  # Create conda cache directory with proper permissions
+  file { '/root/.cache':
+    ensure => directory,
+    mode   => '0755',
+  }
+
+  file { '/root/.cache/conda-anaconda-tos':
+    ensure  => directory,
+    mode    => '0755',
+    require => File['/root/.cache'],
+  }
   
   # Ensure conda bin is in PATH
   file { '/etc/profile.d/conda.sh':
@@ -45,13 +57,36 @@ class sglang_cpu {
     mode    => '0644',
   }
   
+  # Accept conda Terms of Service for main channel
+  exec { 'accept_conda_tos_main':
+    command     => '/usr/bin/env HOME=/root /opt/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main',
+    require     => [Exec['install_miniconda'], File['/root/.cache/conda-anaconda-tos']],
+    path        => ['/opt/miniconda3/bin', '/usr/bin', '/bin'],
+    unless      => '/usr/bin/test -f /root/.cache/conda-anaconda-tos/3c9d068aa053e2a1c4313fe3391b7a8ee57c4fbd09c4e8aeae49ef333a740150.cache',
+  }
+
+  # Accept conda Terms of Service for r channel
+  exec { 'accept_conda_tos_r':
+    command     => '/usr/bin/env HOME=/root /opt/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r',
+    require     => [Exec['install_miniconda'], File['/root/.cache/conda-anaconda-tos']],
+    path        => ['/opt/miniconda3/bin', '/usr/bin', '/bin'],
+    unless      => '/usr/bin/test -f /root/.cache/conda-anaconda-tos/8c054ac91082b2ed4862701ed278dc96a78db796db69dedc296e13baab307527.cache',
+  }
+
+  # Initialize conda for shell usage
+  exec { 'init_conda':
+    command => '/usr/bin/env HOME=/root /opt/miniconda3/bin/conda init bash',
+    require => [Exec['accept_conda_tos_main'], Exec['accept_conda_tos_r']],
+    path    => ['/opt/miniconda3/bin', '/usr/bin', '/bin'],
+    creates => '/root/.condarc',
+  }
+
   # Create conda environment for SGLang CPU
   exec { 'create_sglang_conda_env':
-    command => '/opt/miniconda3/bin/conda create -n sgl-cpu python=3.12 -y',
+    command => '/usr/bin/env HOME=/root /opt/miniconda3/bin/conda create -n sgl-cpu python=3.12 -y',
     creates => '/opt/miniconda3/envs/sgl-cpu',
-    require => Exec['install_miniconda'],
+    require => [Exec['install_miniconda'], Exec['accept_conda_tos_main'], Exec['accept_conda_tos_r'], Exec['init_conda']],
     path    => ['/opt/miniconda3/bin', '/usr/bin', '/bin'],
-    environment => ['PATH=/opt/miniconda3/bin:/usr/bin:/bin'],
   }
   
   # Clone SGLang repository
@@ -80,10 +115,9 @@ class sglang_cpu {
   
   # Install conda dependencies
   exec { 'install_conda_deps':
-    command => '/opt/miniconda3/bin/conda install -n sgl-cpu -y libsqlite=3.48.0 gperftools tbb libnuma numactl',
+    command => '/usr/bin/env HOME=/root /opt/miniconda3/bin/conda install -n sgl-cpu -y libsqlite=3.48.0 gperftools tbb libnuma numactl',
     require => Exec['install_intel_openmp'],
     path    => ['/opt/miniconda3/bin', '/usr/bin', '/bin'],
-    environment => ['PATH=/opt/miniconda3/bin:/usr/bin:/bin'],
   }
   
   # Install SGLang with CPU support
@@ -108,28 +142,7 @@ class sglang_cpu {
   # Create SGLang environment configuration script
   file { '/etc/profile.d/sglang.sh':
     ensure  => file,
-    content => @(EOT)
-# SGLang CPU Configuration
-export PATH="/opt/miniconda3/bin:$PATH"
-export CONDA_PREFIX="/opt/miniconda3/envs/sgl-cpu"
-export SGLANG_USE_CPU_ENGINE=1
-
-# Intel OpenMP and memory allocators
-if [ -f "$CONDA_PREFIX/lib/libiomp5.so" ]; then
-  export LD_PRELOAD="${LD_PRELOAD}:$CONDA_PREFIX/lib/libiomp5.so"
-fi
-
-if [ -f "$CONDA_PREFIX/lib/libtcmalloc.so" ]; then
-  export LD_PRELOAD="${LD_PRELOAD}:$CONDA_PREFIX/lib/libtcmalloc.so"
-fi
-
-if [ -f "$CONDA_PREFIX/lib/libtbbmalloc.so.2" ]; then
-  export LD_PRELOAD="${LD_PRELOAD}:$CONDA_PREFIX/lib/libtbbmalloc.so.2"
-fi
-
-# Activate conda environment
-source /opt/miniconda3/bin/activate sgl-cpu
-| EOT
+    content => "# SGLang CPU Configuration\nexport PATH=\"/opt/miniconda3/bin:\$PATH\"\nexport CONDA_PREFIX=\"/opt/miniconda3/envs/sgl-cpu\"\nexport SGLANG_USE_CPU_ENGINE=1\n\n# Intel OpenMP and memory allocators\nif [ -f \"\$CONDA_PREFIX/lib/libiomp5.so\" ]; then\n  export LD_PRELOAD=\"\${LD_PRELOAD}:\$CONDA_PREFIX/lib/libiomp5.so\"\nfi\n\nif [ -f \"\$CONDA_PREFIX/lib/libtcmalloc.so\" ]; then\n  export LD_PRELOAD=\"\${LD_PRELOAD}:\$CONDA_PREFIX/lib/libtcmalloc.so\"\nfi\n\nif [ -f \"\$CONDA_PREFIX/lib/libtbbmalloc.so.2\" ]; then\n  export LD_PRELOAD=\"\${LD_PRELOAD}:\$CONDA_PREFIX/lib/libtbbmalloc.so.2\"\nfi\n\n# Activate conda environment\nsource /opt/miniconda3/bin/activate sgl-cpu\n",
     mode    => '0644',
     require => Exec['build_cpu_kernels'],
   }
@@ -137,13 +150,7 @@ source /opt/miniconda3/bin/activate sgl-cpu
   # Create activation script for easy use
   file { '/usr/local/bin/sglang-activate':
     ensure  => file,
-    content => @(EOT)
-#!/bin/bash
-# Activate SGLang CPU environment
-source /opt/miniconda3/bin/activate sgl-cpu
-source /etc/profile.d/sglang.sh
-echo "SGLang CPU environment activated!"
-| EOT
+    content => "#!/bin/bash\n# Activate SGLang CPU environment\nsource /opt/miniconda3/bin/activate sgl-cpu\nsource /etc/profile.d/sglang.sh\necho \"SGLang CPU environment activated!\"\n",
     mode    => '0755',
     require => File['/etc/profile.d/sglang.sh'],
   }
